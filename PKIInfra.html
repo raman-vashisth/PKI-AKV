@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sectigo SCM × Azure Key Vault — Dual Perspective Explorer</title>
+<style>
+  :root {
+    --bg: #060d1a;
+    --card: #0d1e35;
+    --card2: #112240;
+    --border: #1e3a5f;
+    --azure: #3b82f6;
+    --sectigo: #10b981;
+    --amber: #f59e0b;
+    --purple: #8b5cf6;
+    --pink: #ec4899;
+    --text: #e6edf5;
+    --muted: #8ba3c7;
+    --dim: #5a7a9e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    background: radial-gradient(ellipse at top, #0f2137 0%, #060d1a 100%);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px 14px 60px;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; }
+
+  /* ---- Header ---- */
+  header { text-align: center; margin-bottom: 20px; }
+  header h1 {
+    font-size: clamp(1.3rem, 3vw, 1.9rem);
+    font-weight: 700;
+    background: linear-gradient(135deg, #6db3f2, #3b82f6 35%, #8b5cf6 65%, #ec4899);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+  }
+  header p { color: var(--muted); font-size: 0.85rem; }
+
+  /* ---- Perspective Toggle ---- */
+  .perspective-toggle {
+    display: flex;
+    justify-content: center;
+    gap: 0;
+    margin-bottom: 20px;
+    background: var(--card2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 5px;
+    width: fit-content;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .persp-btn {
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 700;
+    padding: 10px 28px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    border-radius: 10px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .persp-btn:hover { color: var(--text); }
+  .persp-btn.active {
+    background: linear-gradient(135deg, #1a3a5f, #142b4a);
+    color: var(--text);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+  }
+  .persp-btn.active[data-persp="user"] {
+    background: linear-gradient(135deg, #f59e0b22, #f59e0b11);
+    color: var(--amber);
+    box-shadow: 0 0 20px rgba(245,158,11,0.15);
+  }
+  .persp-btn.active[data-persp="backend"] {
+    background: linear-gradient(135deg, #8b5cf622, #8b5cf611);
+    color: var(--purple);
+    box-shadow: 0 0 20px rgba(139,92,246,0.15);
+  }
+
+  .perspective-panel { display: none; animation: fadeIn 0.35s ease; }
+  .perspective-panel.active { display: block; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ---- Progress ---- */
+  .progress-wrap { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .progress-bar { flex: 1; height: 6px; background: #142b4a; border-radius: 3px; overflow: hidden; }
+  .progress-fill {
+    height: 100%; width: 12.5%;
+    border-radius: 3px;
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .progress-fill.user { background: linear-gradient(90deg, var(--amber), #fbbf24); }
+  .progress-fill.backend { background: linear-gradient(90deg, var(--azure), var(--purple)); }
+  .progress-text { font-size: 0.78rem; color: var(--muted); font-weight: 700; white-space: nowrap; letter-spacing: 0.5px; }
+
+  /* ---- Stage ---- */
+  .stage {
+    position: relative; width: 100%; aspect-ratio: 1000 / 560;
+    background: var(--card);
+    border: 1px solid var(--border); border-radius: 20px;
+    margin-bottom: 18px; overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .stage::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(30,58,95,0.18) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(30,58,95,0.18) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+  }
+  .connections { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .conn-base { fill: none; stroke: #1a3050; stroke-width: 2.5; stroke-dasharray: 10 10; stroke-linecap: round; }
+  .packet {
+    fill: none; stroke-width: 5.5; stroke-linecap: round;
+    stroke-dasharray: 3 97; opacity: 0; transition: opacity 0.4s ease;
+  }
+  .packet.on { opacity: 1; animation: flow 1.6s linear infinite; }
+  @keyframes flow { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -100; } }
+
+  /* ---- Nodes ---- */
+  .node {
+    position: absolute; display: flex; align-items: center; gap: 12px;
+    padding: 0 16px; border-radius: 16px;
+    background: linear-gradient(145deg, #142b4a, #0d1e35);
+    border: 2px solid var(--border);
+    transition: all 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+  }
+  .node .icon {
+    width: 46px; height: 46px; border-radius: 13px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 23px; flex-shrink: 0;
+    background: #0a1628; border: 1px solid var(--border);
+    transition: all 0.45s;
+  }
+  .node .txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .node .name { font-weight: 700; font-size: clamp(0.75rem, 1.3vw, 0.98rem); color: var(--text); }
+  .node .sub { font-size: clamp(0.56rem, 0.85vw, 0.7rem); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .node.active { transform: scale(1.06); z-index: 5; }
+  .node.active.user {
+    border-color: var(--amber);
+    box-shadow: 0 0 0 4px rgba(245,158,11,0.15), 0 0 40px rgba(245,158,11,0.35), inset 0 0 30px rgba(245,158,11,0.08);
+  }
+  .node.active.backend {
+    border-color: var(--purple);
+    box-shadow: 0 0 0 4px rgba(139,92,246,0.15), 0 0 40px rgba(139,92,246,0.35), inset 0 0 30px rgba(139,92,246,0.08);
+  }
+  .node.active .icon { transform: scale(1.06); }
+  .node.active::before {
+    content: ''; position: absolute; inset: -6px; border-radius: 22px;
+    border: 2px solid; opacity: 0; animation: ring 1.8s ease-out infinite; pointer-events: none;
+  }
+  .node.active.user::before { border-color: var(--amber); }
+  .node.active.backend::before { border-color: var(--purple); }
+  @keyframes ring { 0% { opacity: 0.7; transform: scale(1); } 100% { opacity: 0; transform: scale(1.14); } }
+
+  /* Stage node positions */
+  #u-node-user    { left: 4%;  top: 18%; width: 22%; height: 22%; }
+  #u-node-browser { left: 33%; top: 18%; width: 22%; height: 22%; }
+  #u-node-scm     { left: 62%; top: 18%; width: 30%; height: 22%; }
+  #u-node-email   { left: 4%;  top: 58%; width: 22%; height: 22%; }
+  #u-node-cert    { left: 33%; top: 58%; width: 22%; height: 22%; }
+  #u-node-azure   { left: 62%; top: 58%; width: 30%; height: 22%; }
+
+  #b-node-scm     { left: 3%;  top: 8%;  width: 20%; height: 20%; }
+  #b-node-ad      { left: 3%;  top: 38%; width: 20%; height: 20%; }
+  #b-node-kv      { left: 3%;  top: 68%; width: 20%; height: 20%; }
+  #b-node-agent   { left: 75%; top: 38%; width: 22%; height: 20%; }
+  #b-node-ca      { left: 75%; top: 68%; width: 22%; height: 20%; }
+
+  .conn-label {
+    position: absolute; transform: translate(-50%, -50%);
+    background: #0d1e35; border: 1px solid var(--border);
+    color: var(--muted); font-size: 0.58rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 2px 8px; border-radius: 6px; pointer-events: none; white-space: nowrap; transition: all 0.4s;
+  }
+  .conn-label.lit.user { color: var(--amber); border-color: rgba(245,158,11,0.5); box-shadow: 0 0 12px rgba(245,158,11,0.25); }
+  .conn-label.lit.backend { color: var(--purple); border-color: rgba(139,92,246,0.5); box-shadow: 0 0 12px rgba(139,92,246,0.25); }
+
+  .zone-label {
+    position: absolute; font-size: 0.62rem; font-weight: 800;
+    letter-spacing: 1.5px; text-transform: uppercase; pointer-events: none; opacity: 0.5;
+  }
+
+  /* ---- Narration ---- */
+  .narration {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 20px; padding: 22px 26px; margin-bottom: 18px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.35); animation: fadeIn 0.35s ease;
+  }
+  .nar-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+  .nar-step-badge {
+    width: 44px; height: 44px; border-radius: 13px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 1.1rem; flex-shrink: 0;
+  }
+  .nar-step-badge.user { background: linear-gradient(135deg, var(--amber), #d97706); box-shadow: 0 4px 16px rgba(245,158,11,0.45); }
+  .nar-step-badge.backend { background: linear-gradient(135deg, var(--purple), #7c3aed); box-shadow: 0 4px 16px rgba(139,92,246,0.45); }
+  .nar-title { font-size: clamp(0.95rem, 1.8vw, 1.2rem); font-weight: 700; }
+  .nar-subtitle { font-size: 0.75rem; color: var(--muted); font-weight: 600; letter-spacing: 0.3px; }
+  .nar-desc { color: #c5d5e8; font-size: 0.9rem; margin-bottom: 14px; line-height: 1.65; }
+  .nar-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 8px; }
+  .nar-actions .action {
+    display: flex; gap: 10px; align-items: flex-start;
+    font-size: 0.8rem; color: var(--muted);
+    padding: 9px 12px; background: rgba(10,22,40,0.7);
+    border-radius: 9px; border-left: 3px solid var(--border); transition: all 0.3s;
+  }
+  .nar-actions .action.user { border-left-color: var(--amber); }
+  .nar-actions .action.backend { border-left-color: var(--purple); }
+  .nar-actions .action .bullet { font-weight: 800; flex-shrink: 0; }
+  .nar-actions .action.user .bullet { color: var(--amber); }
+  .nar-actions .action.backend .bullet { color: var(--purple); }
+
+  /* ---- Layman toggle ---- */
+  .layman-toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    margin-top: 14px; cursor: pointer; user-select: none;
+    font-size: 0.78rem; color: var(--muted); font-weight: 600;
+  }
+  .layman-toggle input { display: none; }
+  .toggle-track {
+    width: 36px; height: 20px; background: #1e3a5f;
+    border-radius: 10px; position: relative; transition: all 0.3s;
+    flex-shrink: 0;
+  }
+  .toggle-track::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #5a7a9e; transition: all 0.3s;
+  }
+  .layman-toggle input:checked + .toggle-track { background: rgba(16,185,129,0.3); }
+  .layman-toggle input:checked + .toggle-track::after { left: 18px; background: var(--sectigo); }
+  .layman-box {
+    display: none; margin-top: 14px;
+    padding: 14px 18px; border-radius: 12px;
+    background: rgba(16,185,129,0.06);
+    border: 1px solid rgba(16,185,129,0.2);
+    font-size: 0.88rem; color: #b0f0d0; line-height: 1.7;
+  }
+  .layman-box.show { display: block; animation: fadeIn 0.3s ease; }
+  .layman-box strong { color: var(--sectigo); }
+
+  /* ---- Controls ---- */
+  .controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .controls-left, .controls-right { display: flex; gap: 10px; }
+  button {
+    font-family: inherit; font-size: 0.85rem; font-weight: 600;
+    padding: 10px 18px; border-radius: 12px;
+    border: 1px solid var(--border); background: #142b4a;
+    color: var(--text); cursor: pointer; transition: all 0.2s ease;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  button:hover:not(:disabled) { background: #1a3559; border-color: #2c5282; transform: translateY(-1px); }
+  button:active:not(:disabled) { transform: translateY(0); }
+  button:disabled { opacity: 0.3; cursor: not-allowed; }
+  button.primary.user {
+    background: linear-gradient(135deg, var(--amber), #d97706);
+    border-color: transparent; box-shadow: 0 4px 18px rgba(245,158,11,0.35);
+  }
+  button.primary.user:hover:not(:disabled) { background: linear-gradient(135deg, #fbbf24, #f59e0b); }
+  button.primary.backend {
+    background: linear-gradient(135deg, var(--purple), #7c3aed);
+    border-color: transparent; box-shadow: 0 4px 18px rgba(139,92,246,0.35);
+  }
+  button.primary.backend:hover:not(:disabled) { background: linear-gradient(135deg, #a78bfa, #8b5cf6); }
+  .step-dots { display: flex; gap: 7px; align-items: center; }
+  .step-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #1e3a5f; transition: all 0.3s; cursor: pointer;
+  }
+  .step-dot:hover { background: #2c5282; }
+  .step-dot.done.user { background: #d97706; }
+  .step-dot.active.user { background: var(--amber); transform: scale(1.7); box-shadow: 0 0 12px rgba(245,158,11,0.9); }
+  .step-dot.done.backend { background: #7c3aed; }
+  .step-dot.active.backend { background: var(--purple); transform: scale(1.7); box-shadow: 0 0 12px rgba(139,92,246,0.9); }
+
+  /* ---- Responsive ---- */
+  @media (max-width: 720px) {
+    .node { padding: 0 8px; gap: 6px; }
+    .node .icon { width: 30px; height: 30px; font-size: 15px; border-radius: 8px; }
+    .node .sub { display: none; }
+    .narration { padding: 16px; }
+    .nar-actions { grid-template-columns: 1fr; }
+    .conn-label { font-size: 0.48rem; padding: 2px 5px; }
+    button { padding: 8px 12px; font-size: 0.78rem; }
+    .persp-btn { padding: 8px 16px; font-size: 0.78rem; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Sectigo SCM × Azure Key Vault</h1>
+    <p>Two perspectives, one certificate lifecycle — click <strong>Next</strong> to walk through each view</p>
+  </header>
+
+  <!-- ===== PERSPECTIVE TOGGLE ===== -->
+  <div class="perspective-toggle">
+    <button class="persp-btn active" data-persp="user">👤 End-User Perspective</button>
+    <button class="persp-btn" data-persp="backend">⚙️ Backend Perspective</button>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- END-USER PANEL                                                   -->
+  <!-- ================================================================ -->
+  <div class="perspective-panel active" id="panel-user">
+
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill user" id="u-progressFill"></div></div>
+      <div class="progress-text" id="u-progressText">Step 1 of 5</div>
+    </div>
+
+    <div class="stage">
+      <svg class="connections" viewBox="0 0 1000 560">
+        <path class="conn-base" d="M 260 168 L 330 168" />
+        <path class="conn-base" d="M 560 168 L 620 168" />
+        <path class="conn-base" d="M 260 448 L 330 448" />
+        <path class="conn-base" d="M 560 448 L 620 448" />
+        <path class="conn-base" d="M 260 280 L 260 360" />
+
+        <path class="packet" id="u-p1" d="M 260 168 L 330 168" pathLength="100" stroke="#f59e0b"/>
+        <path class="packet" id="u-p2" d="M 560 168 L 620 168" pathLength="100" stroke="#f59e0b"/>
+        <path class="packet" id="u-p3" d="M 620 448 L 560 448" pathLength="100" stroke="#10b981"/>
+        <path class="packet" id="u-p4" d="M 330 448 L 260 448" pathLength="100" stroke="#10b981"/>
+        <path class="packet" id="u-p5" d="M 260 280 L 260 360" pathLength="100" stroke="#f59e0b"/>
+      </svg>
+
+      <div class="zone-label" style="left: 3%; top: 3%; color:#f59e0b;">■ User Actions</div>
+      <div class="zone-label" style="right: 3%; top: 3%; color:#10b981;">Automated ■</div>
+
+      <div class="conn-label" id="u-l1" style="left:29.5%; top:30%;">Request</div>
+      <div class="conn-label" id="u-l2" style="left:59%; top:30%;">Submit</div>
+      <div class="conn-label" id="u-l3" style="left:59%; top:80%;">Issued</div>
+      <div class="conn-label" id="u-l4" style="left:29.5%; top:80%;">Download</div>
+      <div class="conn-label" id="u-l5" style="left:26%; top:57%;">Notify</div>
+
+      <div class="node" id="u-node-user">
+        <div class="icon">👤</div>
+        <div class="txt"><div class="name">You (End User)</div><div class="sub">Open the enrollment link</div></div>
+      </div>
+      <div class="node" id="u-node-browser">
+        <div class="icon">🌐</div>
+        <div class="txt"><div class="name">Browser / Form</div><div class="sub">Fill in domain details</div></div>
+      </div>
+      <div class="node" id="u-node-scm">
+        <div class="icon">🖥️</div>
+        <div class="txt"><div class="name">SCM Dashboard</div><div class="sub">Request submitted</div></div>
+      </div>
+      <div class="node" id="u-node-email">
+        <div class="icon">📧</div>
+        <div class="txt"><div class="name">Email Notification</div><div class="sub">"Your cert is ready"</div></div>
+      </div>
+      <div class="node" id="u-node-cert">
+        <div class="icon">📜</div>
+        <div class="txt"><div class="name">Certificate</div><div class="sub">.p12 / .pem / .p7b</div></div>
+      </div>
+      <div class="node" id="u-node-azure">
+        <div class="icon">☁️</div>
+        <div class="txt"><div class="name">Azure Key Vault</div><div class="sub">Auto-stored for you</div></div>
+      </div>
+    </div>
+
+    <div class="narration" id="u-narration">
+      <div class="nar-head">
+        <div class="nar-step-badge user" id="u-badge">1</div>
+        <div>
+          <div class="nar-title" id="u-title"></div>
+          <div class="nar-subtitle" id="u-subtitle"></div>
+        </div>
+      </div>
+      <div class="nar-desc" id="u-desc"></div>
+      <div class="nar-actions" id="u-actions"></div>
+
+      <label class="layman-toggle">
+        <input type="checkbox" id="u-laymanToggle">
+        <span class="toggle-track"></span>
+        <span>Show me in plain English</span>
+      </label>
+      <div class="layman-box" id="u-layman"></div>
+    </div>
+
+    <div class="controls">
+      <div class="controls-left">
+        <button id="u-btnPrev">← Previous</button>
+        <button id="u-btnRestart">↻</button>
+      </div>
+      <div class="step-dots" id="u-stepDots"></div>
+      <div class="controls-right">
+        <button id="u-btnNext" class="primary user">Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- BACKEND PANEL                                                    -->
+  <!-- ================================================================ -->
+  <div class="perspective-panel" id="panel-backend">
+
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill backend" id="b-progressFill"></div></div>
+      <div class="progress-text" id="b-progressText">Step 1 of 6</div>
+    </div>
+
+    <div class="stage">
+      <svg class="connections" viewBox="0 0 1000 560">
+        <!-- SCM ↔ AD -->
+        <path class="conn-base" d="M 230 100 L 230 180" />
+        <!-- AD ↔ KV -->
+        <path class="conn-base" d="M 230 280 L 230 360" />
+        <!-- SCM ↔ Agent -->
+        <path class="conn-base" d="M 230 140 L 750 240" />
+        <!-- Agent ↔ KV -->
+        <path class="conn-base" d="M 750 280 L 230 400" />
+        <!-- Agent ↔ CA -->
+        <path class="conn-base" d="M 750 380 L 750 440" />
+        <!-- SCM ↔ CA -->
+        <path class="conn-base" d="M 230 120 L 750 480" />
+
+        <path class="packet" id="b-p1" d="M 230 100 L 230 180" pathLength="100" stroke="#3b82f6"/>
+        <path class="packet" id="b-p2" d="M 230 280 L 230 360" pathLength="100" stroke="#3b82f6"/>
+        <path class="packet" id="b-p3" d="M 230 140 L 750 240" pathLength="100" stroke="#10b981"/>
+        <path class="packet" id="b-p4" d="M 750 280 L 230 400" pathLength="100" stroke="#10b981"/>
+        <path class="packet" id="b-p5" d="M 750 380 L 750 440" pathLength="100" stroke="#ec4899"/>
+        <path class="packet" id="b-p6" d="M 230 120 L 750 480" pathLength="100" stroke="#f59e0b"/>
+      </svg>
+
+      <div class="zone-label" style="left: 2%; top: 2%; color:#3b82f6;">■ Azure</div>
+      <div class="zone-label" style="left: 2%; top: 33%; color:#3b82f6;">■ Azure</div>
+      <div class="zone-label" style="left: 2%; top: 64%; color:#3b82f6;">■ Azure</div>
+      <div class="zone-label" style="right: 2%; top: 33%; color:#10b981;">Sectigo ■</div>
+      <div class="zone-label" style="right: 2%; top: 64%; color:#ec4899;">Sectigo CA ■</div>
+
+      <div class="conn-label" id="b-l1" style="left:24%; top:25%;">Auth</div>
+      <div class="conn-label" id="b-l2" style="left:24%; top:57%;">Token</div>
+      <div class="conn-label" id="b-l3" style="left:50%; top:35%;">Commands</div>
+      <div class="conn-label" id="b-l4" style="left:50%; top:61%;">CSR / Certs</div>
+      <div class="conn-label" id="b-l5" style="left:76%; top:73%;">Submit</div>
+      <div class="conn-label" id="b-l6" style="left:50%; top:52%;">Discovery</div>
+
+      <div class="node" id="b-node-scm">
+        <div class="icon">🖥️</div>
+        <div class="txt"><div class="name">Sectigo SCM</div><div class="sub">Cloud orchestrator</div></div>
+      </div>
+      <div class="node" id="b-node-ad">
+        <div class="icon">📋</div>
+        <div class="txt"><div class="name">Azure AD App</div><div class="sub">Client ID · Tenant · Secret</div></div>
+      </div>
+      <div class="node" id="b-node-kv">
+        <div class="icon">🔐</div>
+        <div class="txt"><div class="name">Azure Key Vault</div><div class="sub">HSM-backed key storage</div></div>
+      </div>
+      <div class="node" id="b-node-agent">
+        <div class="icon">⚙️</div>
+        <div class="txt"><div class="name">Private Key Agent</div><div class="sub">On your server</div></div>
+      </div>
+      <div class="node" id="b-node-ca">
+        <div class="icon">🏛️</div>
+        <div class="txt"><div class="name">Sectigo CA</div><div class="sub">Certificate authority</div></div>
+      </div>
+    </div>
+
+    <div class="narration" id="b-narration">
+      <div class="nar-head">
+        <div class="nar-step-badge backend" id="b-badge">1</div>
+        <div>
+          <div class="nar-title" id="b-title"></div>
+          <div class="nar-subtitle" id="b-subtitle"></div>
+        </div>
+      </div>
+      <div class="nar-desc" id="b-desc"></div>
+      <div class="nar-actions" id="b-actions"></div>
+
+      <label class="layman-toggle">
+        <input type="checkbox" id="b-laymanToggle">
+        <span class="toggle-track"></span>
+        <span>Show me in plain English</span>
+      </label>
+      <div class="layman-box" id="b-layman"></div>
+    </div>
+
+    <div class="controls">
+      <div class="controls-left">
+        <button id="b-btnPrev">← Previous</button>
+        <button id="b-btnRestart">↻</button>
+      </div>
+      <div class="step-dots" id="b-stepDots"></div>
+      <div class="controls-right">
+        <button id="b-btnNext" class="primary backend">Next →</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ============================================================
+   PERSPECTIVE TOGGLE
+   ============================================================ */
+document.querySelectorAll('.persp-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.persp-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.perspective-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + btn.dataset.persp).classList.add('active');
+  });
+});
+
+/* ============================================================
+   END-USER STEPS (5 steps)
+   ============================================================ */
+const userSteps = [
+  {
+    title: "You Open the Enrollment Link",
+    subtitle: "What you see: A simple web form",
+    desc: "Your IT administrator sends you a link to a Sectigo enrollment form. You open it in your browser. It asks for basic details — which domain you need the certificate for, your organization, and how long you need it. No technical knowledge required.",
+    actions: [
+      "Open the enrollment URL in any browser",
+      "Authenticate (email confirmation or Secret ID)",
+      "Enter the domain name (Common Name / SANs)",
+      "Select certificate type and term",
+      "Click Submit"
+    ],
+    layman: "<strong>Think of it like this:</strong> You're ordering a new ID card online. You fill in your name, pick the type of ID you want, and hit submit. You don't need to know how the ID card factory works — you just place the order.",
+    nodes: ["u-node-user", "u-node-browser"],
+    packets: ["u-p1"],
+    labels: ["u-l1"]
+  },
+  {
+    title: "Your Request Goes to the Dashboard",
+    subtitle: "What you see: A confirmation message",
+    desc: "After you submit, the request appears in your company's SCM dashboard. Your IT team can see it, approve it if needed, and track its progress. You'll see a confirmation that your request was received.",
+    actions: [
+      "Your form data is submitted to Sectigo SCM",
+      "The request appears in the SCM dashboard",
+      "Your IT team can view, approve, or modify it",
+      "You receive a confirmation message"
+    ],
+    layman: "<strong>Think of it like this:</strong> You've submitted your order, and now it shows up on the store's screen. The store staff can see it and process it. You get a receipt saying 'we got your order.'",
+    nodes: ["u-node-browser", "u-node-scm"],
+    packets: ["u-p2"],
+    labels: ["u-l2"]
+  },
+  {
+    title: "You Get an Email — 'Your Certificate Is Ready'",
+    subtitle: "What you see: An email in your inbox",
+    desc: "Once the certificate is issued, SCM automatically sends you a collection email. It contains a summary, a link to download the certificate, and a unique certificate ID. You don't have to do anything until you get this email.",
+    actions: [
+      "SCM sends a certificate collection email automatically",
+      "Email contains: certificate summary, download link, unique cert ID",
+      "Click the link to go to the download page",
+      "Your certificate is waiting for you"
+    ],
+    layman: "<strong>Think of it like this:</strong> You get a text message saying 'Your package is ready for pickup.' You click the link, and you're taken to a page where you can grab it.",
+    nodes: ["u-node-email"],
+    packets: ["u-p5"],
+    labels: ["u-l5"]
+  },
+  {
+    title: "You Download the Certificate",
+    subtitle: "What you see: A download button and format options",
+    desc: "On the download page, you pick the format you need. Most users just need the PKCS#12 (.p12) file — it's a single file containing the certificate, the private key, and the chain, all password-protected. If you're on Linux, you might prefer PEM format.",
+    actions: [
+      "Click Download on the certificate page",
+      "Choose your format: PKCS#12 (.p12) for Windows/Mac, PEM for Linux, PKCS#7 (.p7b) for chain only",
+      "For PKCS#12, set a password to protect the file",
+      "Save the file to your computer"
+    ],
+    layman: "<strong>Think of it like this:</strong> The pickup page asks 'What container do you want?' You can pick a small locked box (PKCS#12) or a clear envelope (PEM). Either way, you get the same certificate inside.",
+    nodes: ["u-node-email", "u-node-cert"],
+    packets: ["u-p4"],
+    labels: ["u-l4"]
+  },
+  {
+    title: "The Certificate Is Also in Azure — Automatically",
+    subtitle: "What you see: Nothing — it happens silently",
+    desc: "Here's the magic part: while you were waiting for your email, the Private Key Agent already installed the certificate into Azure Key Vault. If your company uses Azure services (App Service, App Gateway, etc.), they can use the certificate immediately. You never had to touch Azure.",
+    actions: [
+      "The Private Key Agent merged the signed cert with the vault key",
+      "Certificate is stored as a Key Vault certificate object",
+      "Azure services (App Service, App Gateway) can consume it instantly",
+      "You never had to log into Azure or configure anything"
+    ],
+    layman: "<strong>Think of it like this:</strong> You ordered the ID card, but before you even picked it up, a copy was already placed in every office building that needed it. You still get your personal copy, but the important places already have theirs.",
+    nodes: ["u-node-scm", "u-node-azure"],
+    packets: ["u-p3"],
+    labels: ["u-l3"]
+  }
+];
+
+/* ============================================================
+   BACKEND STEPS (6 steps)
+   ============================================================ */
+const backendSteps = [
+  {
+    title: "SCM Authenticates to Azure",
+    subtitle: "Technical: OAuth 2.0 client credentials flow",
+    desc: "Sectigo SCM uses the Azure AD application credentials (Client ID, Tenant ID, Client Secret) that your administrator configured. It requests an OAuth 2.0 access token from Azure AD using the client credentials grant. This token authorizes all subsequent operations.",
+    actions: [
+      "SCM sends POST /token to Azure AD with client_id, client_secret, tenant_id",
+      "Azure AD validates the credentials and returns an access token (JWT)",
+      "Token contains scopes for Key Vault operations",
+      "SCM stores the token and uses it for all Azure API calls"
+    ],
+    layman: "<strong>In simple words:</strong> SCM shows its ID card to Azure and says 'I'm allowed to manage certificates here.' Azure checks the ID and gives SCM a temporary key that opens the door to your Key Vault.",
+    nodes: ["b-node-scm", "b-node-ad"],
+    packets: ["b-p1"],
+    labels: ["b-l1"]
+  },
+  {
+    title: "SCM Validates Access to Key Vault",
+    subtitle: "Technical: RBAC + API permission check",
+    desc: "SCM verifies that the Azure AD application has the required permissions. This includes the API permission (user_impersonation) and the RBAC roles (Key Vault Contributor on the resource group, Key Vault Administrator on the vault). SCM also checks the vault's access configuration (RBAC vs. access policy).",
+    actions: [
+      "SCM calls Key Vault GET /certificates with the access token",
+      "Azure validates the token against RBAC/access policy",
+      "SCM enumerates available subscriptions, resource groups, and vaults",
+      "If permissions are missing, SCM returns a 403 Forbidden"
+    ],
+    layman: "<strong>In simple words:</strong> SCM checks that it has the right keys to enter each room in the building. If the key is missing or expired, the door stays locked and SCM reports an error.",
+    nodes: ["b-node-ad", "b-node-kv"],
+    packets: ["b-p2"],
+    labels: ["b-l2"]
+  },
+  {
+    title: "Agent Receives the Command",
+    subtitle: "Technical: Polling or push via SCM agent protocol",
+    desc: "The Private Key Agent, installed on your server, maintains a persistent connection to SCM. When a certificate is requested, SCM sends a command to the agent. The agent then acts on the vault using its own Azure AD application credentials (separate from SCM's).",
+    actions: [
+      "SCM sends 'Generate CSR in Azure Key Vault' command to agent",
+      "Agent receives command via its inbound listener (TCP 9091) or polling",
+      "Agent authenticates to Azure using its own app registration",
+      "Agent is ready to execute vault operations"
+    ],
+    layman: "<strong>In simple words:</strong> SCM sends a message to the little helper program running on your server. The helper knows how to talk directly to your Key Vault, so SCM delegates the actual work to it.",
+    nodes: ["b-node-scm", "b-node-agent"],
+    packets: ["b-p3"],
+    labels: ["b-l3"]
+  },
+  {
+    title: "Key Pair Generated Inside the Vault",
+    subtitle: "Technical: Azure Key Vault key creation + PKCS#10 CSR",
+    desc: "This is the critical security step. The agent instructs Azure Key Vault to create a new key pair. The private key is generated on the vault's hardware (HSM in Premium tier) and never leaves it. The vault then produces a PKCS#10 CSR — a public document containing the public key and subject information.",
+    actions: [
+      "Agent calls Key Vault POST /keys to create a new RSA key",
+      "Key Vault generates the key pair inside its HSM boundary",
+      "Vault creates a PKCS#10 CSR from the public key",
+      "Agent retrieves the CSR (public key only) and sends it to SCM",
+      "Private key remains locked inside the vault — never transmitted"
+    ],
+    layman: "<strong>In simple words:</strong> The helper program tells the vault 'Make me a new lock and key.' The vault makes them inside its secure room. The helper takes only a photocopy of the lock (the CSR) outside. The actual key never leaves the room.",
+    nodes: ["b-node-agent", "b-node-kv"],
+    packets: ["b-p4"],
+    labels: ["b-l4"]
+  },
+  {
+    title: "Sectigo CA Signs the Certificate",
+    subtitle: "Technical: DV/OV/EV validation + X.509 signing",
+    desc: "SCM receives the CSR and submits it to the Sectigo Certificate Authority. The CA performs the required validation (Domain Validation, Organization Validation, or Extended Validation), then signs the certificate using its intermediate/root hierarchy. The signed chain is returned to SCM.",
+    actions: [
+      "SCM forwards the CSR to Sectigo CA",
+      "CA performs DV, OV, or EV validation as configured",
+      "CA signs the certificate with its intermediate certificate",
+      "Signed certificate chain is returned to SCM"
+    ],
+    layman: "<strong>In simple words:</strong> The photocopy of the lock goes to a trusted authority — like a government office. They check that everything is real, then stamp it with their official seal. That stamp is what makes browsers trust the certificate.",
+    nodes: ["b-node-agent", "b-node-ca"],
+    packets: ["b-p5"],
+    labels: ["b-l5"]
+  },
+  {
+    title: "Certificate Merged & Stored in Vault",
+    subtitle: "Technical: Merge signed cert with vault private key",
+    desc: "The agent receives the signed certificate chain and merges it with the private key already stored in Azure Key Vault. The result is a Key Vault certificate object containing the certificate, its chain, and the associated key. Azure services can now consume it directly.",
+    actions: [
+      "Agent receives signed certificate chain from SCM",
+      "Agent calls Key Vault to merge the cert with the existing key",
+      "Result stored as a Key Vault certificate object",
+      "CA certificates ordered explicitly from end-entity to root",
+      "Azure App Service, App Gateway, API Management can consume it"
+    ],
+    layman: "<strong>In simple words:</strong> The stamped photocopy comes back. The helper puts it together with the original key inside the vault, creating a complete 'certificate package.' Now any Azure service can grab that package and use it.",
+    nodes: ["b-node-scm", "b-node-agent", "b-node-kv"],
+    packets: ["b-p6"],
+    labels: ["b-l6"]
+  }
+];
+
+/* ============================================================
+   RENDER ENGINE
+   ============================================================ */
+function createWizard(config) {
+  const { steps, prefix, progressFill, progressText, badge, title, subtitle, desc, actions,
+          layman, laymanToggle, narration, btnPrev, btnNext, btnRestart, stepDots,
+          nodeClass, packetClass, labelClass } = config;
+
+  let current = 0;
+
+  // Build dots
+  steps.forEach((_, i) => {
+    const d = document.createElement('div');
+    d.className = 'step-dot';
+    d.title = 'Step ' + (i + 1) + ': ' + steps[i].title;
+    d.addEventListener('click', () => goTo(i));
+    stepDots.appendChild(d);
+  });
+
+  function render() {
+    const step = steps[current];
+
+    progressFill.style.width = ((current + 1) / steps.length) * 100 + '%';
+    progressText.textContent = `Step ${current + 1} of ${steps.length}`;
+
+    [...stepDots.children].forEach((d, i) => {
+      d.classList.toggle('active', i === current);
+      d.classList.toggle('done', i < current);
+    });
+
+    // Nodes
+    document.querySelectorAll(`[id^="${prefix}-node-"]`).forEach(n => n.classList.remove('active', 'user', 'backend'));
+    step.nodes.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.classList.add('active', nodeClass); }
+    });
+
+    // Packets
+    document.querySelectorAll(`[id^="${prefix}-p"]`).forEach(p => p.classList.remove('on'));
+    step.packets.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('on');
+    });
+
+    // Labels
+    document.querySelectorAll(`[id^="${prefix}-l"]`).forEach(l => l.classList.remove('lit', 'user', 'backend'));
+    step.labels.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('lit', nodeClass);
+    });
+
+    // Narration
+    badge.textContent = current + 1;
+    title.textContent = step.title;
+    subtitle.textContent = step.subtitle;
+    desc.textContent = step.desc;
+
+    actions.innerHTML = '';
+    step.actions.forEach(a => {
+      const div = document.createElement('div');
+      div.className = 'action ' + nodeClass;
+      div.innerHTML = `<span class="bullet">▸</span><span>${a}</span>`;
+      actions.appendChild(div);
+    });
+
+    // Layman box
+    layman.innerHTML = step.layman || '';
+    layman.classList.toggle('show', laymanToggle.checked);
+
+    // Animation reset
+    narration.style.animation = 'none';
+    void narration.offsetWidth;
+    narration.style.animation = '';
+
+    // Buttons
+    btnPrev.disabled = current === 0;
+    btnNext.disabled = current === steps.length - 1;
+    btnNext.textContent = current === steps.length - 1 ? '✓ Done' : 'Next →';
+  }
+
+  function goTo(i) {
+    if (i < 0 || i >= steps.length) return;
+    current = i;
+    render();
+  }
+
+  btnPrev.addEventListener('click', () => goTo(current - 1));
+  btnNext.addEventListener('click', () => goTo(current + 1));
+  btnRestart.addEventListener('click', () => goTo(0));
+
+  document.addEventListener('keydown', e => {
+    if (!document.getElementById('panel-' + config.panelId).classList.contains('active')) return;
+    if (e.key === 'ArrowRight' && current < steps.length - 1) goTo(current + 1);
+    if (e.key === 'ArrowLeft'  && current > 0)                 goTo(current - 1);
+  });
+
+  laymanToggle.addEventListener('change', () => {
+    layman.classList.toggle('show', laymanToggle.checked);
+  });
+
+  render();
+}
+
+/* ---- Initialize User Wizard ---- */
+createWizard({
+  steps: userSteps,
+  prefix: 'u',
+  panelId: 'user',
+  progressFill: document.getElementById('u-progressFill'),
+  progressText: document.getElementById('u-progressText'),
+  badge: document.getElementById('u-badge'),
+  title: document.getElementById('u-title'),
+  subtitle: document.getElementById('u-subtitle'),
+  desc: document.getElementById('u-desc'),
+  actions: document.getElementById('u-actions'),
+  layman: document.getElementById('u-layman'),
+  laymanToggle: document.getElementById('u-laymanToggle'),
+  narration: document.getElementById('u-narration'),
+  btnPrev: document.getElementById('u-btnPrev'),
+  btnNext: document.getElementById('u-btnNext'),
+  btnRestart: document.getElementById('u-btnRestart'),
+  stepDots: document.getElementById('u-stepDots'),
+  nodeClass: 'user',
+  packetClass: 'user',
+  labelClass: 'user'
+});
+
+/* ---- Initialize Backend Wizard ---- */
+createWizard({
+  steps: backendSteps,
+  prefix: 'b',
+  panelId: 'backend',
+  progressFill: document.getElementById('b-progressFill'),
+  progressText: document.getElementById('b-progressText'),
+  badge: document.getElementById('b-badge'),
+  title: document.getElementById('b-title'),
+  subtitle: document.getElementById('b-subtitle'),
+  desc: document.getElementById('b-desc'),
+  actions: document.getElementById('b-actions'),
+  layman: document.getElementById('b-layman'),
+  laymanToggle: document.getElementById('b-laymanToggle'),
+  narration: document.getElementById('b-narration'),
+  btnPrev: document.getElementById('b-btnPrev'),
+  btnNext: document.getElementById('b-btnNext'),
+  btnRestart: document.getElementById('b-btnRestart'),
+  stepDots: document.getElementById('b-stepDots'),
+  nodeClass: 'backend',
+  packetClass: 'backend',
+  labelClass: 'backend'
+});
+</script>
+</body>
+</html>
